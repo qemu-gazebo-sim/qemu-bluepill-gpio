@@ -3,14 +3,15 @@ import re
 import os
 import sys
 import pexpect
+import time
 
 SOCK_PATH="/tmp/tmp-gpio.sock"
-GPIO_RANGE=[0x3f200000, 0x3f200fff]
-IC_RANGE  =[0x3f00b200, 0x3f00b3ff]
+GPIO_RANGE=[0x40010c00, 0x40011000]
+IC_RANGE  =[0x40010400, 0x40010800]
 
-GPIO_SET_OFFSET=0x1c
-GPIO_RESET_OFFSET=0x28
-GPIO_READ_OFFSET=0x34
+GPIO_SET_OFFSET=0x0
+GPIO_RESET_OFFSET=0x4
+GPIO_READ_OFFSET=0xc
 
 class VGPIOManager(object):
     fd = None
@@ -45,13 +46,18 @@ class VGPIOManager(object):
 
     def _read(self):
         # Cancel echo
-        self.fd.readline()
-        return self.fd.readline()
+        try:
+            value = ''
+            while not ("OK" in value):
+                value = self.fd.readline()
+                value = value.decode("utf-8")
+            return value
+        except:
+            return None
 
     def read_entire_gpio_area(self):
-        v = self.read(GPIO_RANGE[0], 0x1000)
+        v = self.read(GPIO_RANGE[0], 0x400)
         return v
-
 
     def close(self):
         self.fd.close()
@@ -76,21 +82,28 @@ class VGPIOManager(object):
         return v
 
     def get_gpio_location(self, num):
-        if num > 54 or num < 0:
+        if num > 64 or num < 0:
             return 0
-        return GPIO_RANGE[0] + int(num / 32)
+        return GPIO_RANGE[0] + 0x4*int(num / 64)
 
-    def set(self, gpionum, value):
+    def set(self, gpionum, value, offset=GPIO_SET_OFFSET, state = 1):
         m = self.get_gpio_location(gpionum)
         if value:
-            m += GPIO_SET_OFFSET
+            m += offset
         else:
             m += GPIO_RESET_OFFSET
-        gpio = 1 << (gpionum % 32)
-        return self.writel(m, gpio)
+        
+        v = int(self.readl(m).split()[1], 0)
+        gpio = 1 << (gpionum % 64)
+        if state == 1:
+            new_value = v | gpio
+        else:
+            new_value = v & (~gpio)
 
-    def get(self, gpionum):
-        m = self.get_gpio_location(gpionum) + GPIO_READ_OFFSET
+        return self.writel(m, new_value)
+
+    def get(self, gpionum, offset=GPIO_READ_OFFSET):
+        m = self.get_gpio_location(gpionum) + offset
         v = int(self.readl(m).split()[1], 0)
         gpio = 1 << (gpionum % 32)
 
@@ -107,6 +120,23 @@ class VGPIOManager(object):
 
         if c == 'help':
             return self.help()
+        elif c == 'TEST_SET':
+            for i in range (0,64):
+                print(f"{i} : {self.set(i, int(s[1]))}")
+            return "Finalizado"
+        elif c == 'TEST_GET':
+            for i in range (0,64):
+                print(f"{i} : {self.get(i)}")
+        elif c == 'TEST_READ':
+            init = GPIO_READ_OFFSET
+            for i in range(0,64):
+                self.get(0, init)
+                init += 0x8
+            return "Finalizado"
+        elif c == "TEST2":
+            return (self.writel(int(0x40010c00), 512))
+        elif c == "TEST3":
+            return (self.readl(int(0x40010c00)))
         elif c == 'get':
             if len(s) < 2:
                 return "Error: get requires 1 argument"
